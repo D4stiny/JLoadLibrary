@@ -2,7 +2,7 @@ package com.billdemirkapi.jll;
 
 import com.sun.jna.Memory;
 import com.sun.jna.Native;
-import com.sun.jna.platform.win32.WinDef.DWORD;
+import com.sun.jna.platform.win32.BaseTSD.DWORD_PTR;
 import com.sun.jna.platform.win32.WinDef.*;
 import com.sun.jna.platform.win32.WinNT.*;
 import com.sun.jna.win32.W32APIOptions;
@@ -20,7 +20,7 @@ public class Controller {
 		}
 		
 		try {
-           	boolean injectResult = inject(Integer.valueOf(args[1]), args[2]);
+           	boolean injectResult = inject(Integer.valueOf(args[0]), args[1]);
 
            	if(injectResult) 
            		System.out.println("Injection successful!");
@@ -32,46 +32,21 @@ public class Controller {
 	}
 	
 	public static boolean inject(int processID, String dllName) {
-		DWORD processAccess = new DWORD(0x43A);
+		DWORD_PTR processAccess = new DWORD_PTR(0x43A);
 		
-		HANDLE hProcess = kernel32.OpenProcess(processAccess, new BOOL(false), new DWORD(processID));
+		HANDLE hProcess = kernel32.OpenProcess(processAccess, new BOOL(false), new DWORD_PTR(processID));
 		if(hProcess == null) {
 			System.out.println("Handle was NULL! Error: " + kernel32.GetLastError());
 			return false;
 		}
 		
-		int loadLibraryDifference = kernel32.GetProcAddress(kernel32.GetModuleHandle("KERNEL32"), "LoadLibraryA").hashCode() - kernel32.GetModuleHandle("KERNEL32").hashCode();
-		if(loadLibraryDifference == 0x0) {
-			System.out.println("loadLibraryDifference was NULL! Error: " + kernel32.GetLastError());
+		DWORD_PTR loadLibraryAddress = kernel32.GetProcAddress(kernel32.GetModuleHandle("KERNEL32"), "LoadLibraryA");
+		if(loadLibraryAddress.intValue() == 0) {
+			System.out.println("Could not find LoadLibrary! Error: " + kernel32.GetLastError());
 			return false;
 		}
 		
-		DWORD[] hMods = new DWORD[1024];
-		Pointer cbNeeded = new Memory(4);
-		DWORD loadLibraryAddress = new DWORD(0x0);
-		
-		BOOL EnumProcMods = psapi.EnumProcessModulesEx(hProcess, hMods, 1024, cbNeeded, new DWORD(0x1));
-		
-		if(EnumProcMods == null) {
-			System.out.println("EnumProcMods was NULL! Error: " + kernel32.GetLastError());
-			return false;
-		}
-		
-		for(int i = 0; i < (cbNeeded.getInt(0) - 0x4); i++) {
-			char[] szModName = new char[260];
-			
-			DWORD getName = psapi.GetModuleFileNameEx(hProcess, hMods[i], szModName, new DWORD(0x104));
-			if(getName.intValue() != 0x0) {
-				String sName = String.valueOf(szModName);
-				if(sName.indexOf("kernel32") != -1) {
-					loadLibraryAddress = new DWORD((hMods[i].intValue() + loadLibraryDifference));
-				}				
-			} else {
-				 
-			}
-		}
-
-		LPVOID dllNameAddress = kernel32.VirtualAllocEx(hProcess, null, (dllName.length() + 1), 0x3000, 0x4);
+		LPVOID dllNameAddress = kernel32.VirtualAllocEx(hProcess, null, (dllName.length() + 1), new DWORD_PTR(0x3000), new DWORD_PTR(0x4));
 		if(dllNameAddress == null) {
 			System.out.println("dllNameAddress was NULL! Error: " + kernel32.GetLastError());
 			return false;
@@ -80,8 +55,17 @@ public class Controller {
 		Pointer m = new Memory(dllName.length() + 1);
 		m.setString(0, dllName); 
 
-		kernel32.WriteProcessMemory(hProcess, dllNameAddress, m, dllName.length(), null);
-		kernel32.CreateRemoteThread(hProcess, 0, 0, loadLibraryAddress, dllNameAddress, 0, 0);			
+		boolean wpmSuccess = kernel32.WriteProcessMemory(hProcess, dllNameAddress, m, dllName.length(), null).booleanValue();
+		if(!wpmSuccess) {
+			System.out.println("WriteProcessMemory failed! Error: " + kernel32.GetLastError());
+			return false;
+		}
+		
+		DWORD_PTR threadHandle = kernel32.CreateRemoteThread(hProcess, 0, 0, loadLibraryAddress, dllNameAddress, 0, 0);			
+		if(threadHandle.intValue() == 0) {
+			System.out.println("threadHandle was invalid! Error: " + kernel32.GetLastError());
+			return false;
+		}
 		
 		kernel32.CloseHandle(hProcess);
 		
